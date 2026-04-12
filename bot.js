@@ -48,21 +48,9 @@ const EMOJIS = [
 ];
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-/**
- * tempChannels: Map<channelId, {
- *   ownerId:       string,
- *   panelMessageId: string | null,
- *   panelSending:  boolean,   // guard against concurrent panel sends
- *   trusted:       Set<string>,
- *   kicked:        Set<string>,
- *   locked:        boolean,
- * }>
- */
 const tempChannels   = new Map();
-const tickets        = new Map();  // userId → channelId
-const claimedTickets = new Map();  // channelId → staffId
-
-// Dedup set: ignore duplicate interaction IDs (double-click protection)
+const tickets        = new Map();
+const claimedTickets = new Map();
 const handledInteractions = new Set();
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -151,7 +139,6 @@ function buildVoiceButtons() {
   ];
 }
 
-// Edits the ONE panel message — never sends another one
 async function updatePanel(channelId) {
   const data = tempChannels.get(channelId);
   if (!data || !data.panelMessageId || data.panelSending) return;
@@ -186,16 +173,29 @@ async function sweepEmptyChannels(guild, skipChannelId = null) {
 client.on("voiceStateUpdate", async (oldState, newState) => {
   const guild = newState.guild || oldState.guild;
 
-  // ── Member joins the CREATE channel ──────────────────────────────────────────
   if (newState.channelId === JOIN_CHANNEL_ID) {
     const member = newState.member;
     if (!member) return;
 
-    // Prevent double-create if same user somehow triggers twice
     const existing = [...tempChannels.entries()].find(([, d]) => d.ownerId === member.id);
     if (existing) {
-      await member.voice.setChannel(existing[0]).catch(() => {});
-      return;
+      const [existingId, existingData] = existing;
+      const existingVc = guild.channels.cache.get(existingId);
+      const others = existingVc
+        ? [...existingVc.members.values()].filter((m) => !m.user.bot && m.id !== member.id)
+        : [];
+
+      if (others.length === 0) {
+        // Old channel is empty — delete it and fall through to create a new one
+        tempChannels.delete(existingId);
+        if (existingVc) await existingVc.delete().catch(() => {});
+      } else {
+        // Old channel still has people — transfer ownership to first remaining member
+        existingData.ownerId = others[0].id;
+        existingData.trusted.clear();
+        await updatePanel(existingId);
+        // Fall through to create a new channel for this user
+      }
     }
 
     const emoji       = randomEmoji();
@@ -252,17 +252,15 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     const data = {
       ownerId: member.id,
       panelMessageId: null,
-      panelSending: true,   // block updatePanel until first send completes
+      panelSending: true,
       trusted: new Set(),
       kicked: new Set(),
       locked: false,
     };
     tempChannels.set(voiceChannel.id, data);
 
-    // Move user first
     await member.voice.setChannel(voiceChannel).catch(() => {});
 
-    // Send the panel exactly once
     const embed = await buildVoiceEmbed(guild, voiceChannel.id, data);
     const msg   = await voiceChannel.send({
       embeds: [embed],
@@ -272,15 +270,12 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     if (msg) data.panelMessageId = msg.id;
     data.panelSending = false;
 
-    // Sweep other channels (skip the one we just created)
     await sweepEmptyChannels(guild, voiceChannel.id);
     return;
   }
 
-  // ── Sweep all other temp channels on any voice event ─────────────────────────
   await sweepEmptyChannels(guild);
 
-  // Update panel for channel user just joined (if it's a temp channel)
   if (
     newState.channelId &&
     newState.channelId !== JOIN_CHANNEL_ID &&
@@ -289,7 +284,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     await updatePanel(newState.channelId);
   }
 
-  // Update panel for channel user just left (if it's still alive)
   if (
     oldState.channelId &&
     oldState.channelId !== JOIN_CHANNEL_ID &&
@@ -301,7 +295,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
 
 // ─── INTERACTION HANDLER ──────────────────────────────────────────────────────
 client.on("interactionCreate", async (interaction) => {
-  // Dedup: ignore duplicate interaction IDs (double-click protection)
   if (handledInteractions.has(interaction.id)) return;
   handledInteractions.add(interaction.id);
   setTimeout(() => handledInteractions.delete(interaction.id), 10000);
@@ -324,12 +317,10 @@ client.on("interactionCreate", async (interaction) => {
     if (!interaction.isButton()) return;
 
     const id = interaction.customId;
-
-    if (id.startsWith("vc_"))        { await handleVoiceButton(interaction, id); return; }
-    if (id === "ticket_open")        { await handleTicketOpen(interaction);      return; }
-    if (id === "ticket_claim")       { await handleTicketClaim(interaction);     return; }
-    if (id === "ticket_close")       { await handleTicketClose(interaction);     return; }
-    // ticket_claimed_placeholder is disabled, never fires
+    if (id.startsWith("vc_"))  { await handleVoiceButton(interaction, id); return; }
+    if (id === "ticket_open")  { await handleTicketOpen(interaction);      return; }
+    if (id === "ticket_claim") { await handleTicketClaim(interaction);     return; }
+    if (id === "ticket_close") { await handleTicketClose(interaction);     return; }
   } catch (err) {
     console.error("[InteractionError]", err);
     try {
@@ -342,11 +333,11 @@ client.on("interactionCreate", async (interaction) => {
 
 // ─── VOICE BUTTONS ────────────────────────────────────────────────────────────
 async function handleVoiceButton(interaction, customId) {
-  const channel  = interaction.channel;
-  const member   = interaction.member;
-  const guild    = interaction.guild;
+  const channel   = interaction.channel;
+  const member    = interaction.member;
+  const guild     = interaction.guild;
   const channelId = channel.id;
-  const data     = tempChannels.get(channelId);
+  const data      = tempChannels.get(channelId);
 
   if (!data) {
     await safeReply(interaction, { embeds: [feedbackEmbed("This temp voice is no longer active.")] });
@@ -357,9 +348,9 @@ async function handleVoiceButton(interaction, customId) {
 
   // ── CLAIM ──
   if (customId === "vc_claim") {
-    const vc            = guild.channels.cache.get(channelId);
-    const ownerPresent  = vc?.members.has(data.ownerId);
-    const selfPresent   = vc?.members.has(member.id);
+    const vc           = guild.channels.cache.get(channelId);
+    const ownerPresent = vc?.members.has(data.ownerId);
+    const selfPresent  = vc?.members.has(member.id);
 
     if (ownerPresent) {
       await safeReply(interaction, { embeds: [feedbackEmbed("The owner is still in the channel.")] });
@@ -372,7 +363,27 @@ async function handleVoiceButton(interaction, customId) {
 
     data.ownerId = member.id;
     data.trusted.clear();
-    await safeReply(interaction, { embeds: [feedbackEmbed("✅ You have claimed the channel!")] });
+
+    // Reply FIRST — Discord requires a response within 3 seconds
+    await safeReply(interaction, { embeds: [feedbackEmbed("✅ You have claimed the channel! You are now the owner.")] });
+
+    // Give the claimer an explicit owner-level overwrite so lock/unlock never affects them
+    if (vc) {
+      await vc.permissionOverwrites.edit(member.id, {
+        ViewChannel: true,
+        Connect: true,
+        Speak: true,
+        Stream: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+        UseApplicationCommands: true,
+        UseSoundboard: true,
+        UseExternalSounds: true,
+        UseVAD: true,
+        UseEmbeddedActivities: true,
+      }).catch(() => {});
+    }
+
     await updatePanel(channelId);
     return;
   }
@@ -443,7 +454,6 @@ async function handleTrustModal(interaction) {
   const channel = interaction.guild.channels.cache.get(channelId);
 
   await safeReply(interaction, { embeds: [feedbackEmbed(`✅ <@${userId}> has been trusted.`)] });
-
   data.trusted.add(userId);
   if (channel) {
     await channel.permissionOverwrites.edit(userId, {
@@ -463,7 +473,6 @@ async function handleUntrustModal(interaction) {
   const channel = interaction.guild.channels.cache.get(channelId);
 
   await safeReply(interaction, { embeds: [feedbackEmbed(`✅ <@${userId}> has been untrusted.`)] });
-
   data.trusted.delete(userId);
   if (channel) await channel.permissionOverwrites.edit(userId, { Connect: false }).catch(() => {});
   await updatePanel(channelId);
@@ -478,10 +487,8 @@ async function handleKickModal(interaction) {
   const channel = interaction.guild.channels.cache.get(channelId);
 
   await safeReply(interaction, { embeds: [feedbackEmbed(`✅ <@${userId}> has been kicked.`)] });
-
   data.kicked.add(userId);
   data.trusted.delete(userId);
-
   if (channel) {
     await channel.permissionOverwrites.edit(userId, { Connect: false }).catch(() => {});
     const target = channel.members.get(userId);
@@ -499,7 +506,6 @@ async function handleDisconnectModal(interaction) {
   const channel = interaction.guild.channels.cache.get(channelId);
 
   await safeReply(interaction, { embeds: [feedbackEmbed(`✅ <@${userId}> has been disconnected.`)] });
-
   if (channel) {
     const target = channel.members.get(userId);
     if (target) await target.voice.disconnect().catch(() => {});
@@ -546,8 +552,7 @@ async function handleTicketOpen(interaction) {
   }
 
   if (tickets.has(member.id)) {
-    const existingId      = tickets.get(member.id);
-    const existingChannel = guild.channels.cache.get(existingId);
+    const existingChannel = guild.channels.cache.get(tickets.get(member.id));
     if (existingChannel) {
       await interaction.reply({ embeds: [feedbackEmbed("💌 You already have an active ticket!")], flags: MessageFlags.Ephemeral });
       return;
@@ -580,7 +585,7 @@ async function handleTicketOpen(interaction) {
     .setThumbnail(member.user.displayAvatarURL())
     .setDescription(
       `**__Hello <@${member.id}>__**\n\n` +
-      `**Thank you for reaching out! Please describe your issue or question in detail, and a member of our staff team will assist you as soon as possible**\n` +
+      `**Thank you for reaching out! Please describe your issue in detail, and a staff member will assist you as soon as possible.**\n\n` +
       `**Guidelines:**\n` +
       `**• Mention spam is prohibited**\n` +
       `**• One issue per ticket**\n` +
@@ -613,7 +618,6 @@ async function handleTicketClaim(interaction) {
 
   claimedTickets.set(channel.id, member.id);
 
-  // Replace Claim button with a disabled label, keep Close
   const updatedRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("ticket_claimed_placeholder")
@@ -624,7 +628,6 @@ async function handleTicketClaim(interaction) {
   );
   await interaction.update({ components: [updatedRow] });
 
-  // Lock out other staff; give exclusive access to claimer
   await channel.permissionOverwrites.edit(SUPPORT_ROLE_ID, { ViewChannel: false }).catch(() => {});
   await channel.permissionOverwrites.edit(member.id, {
     ViewChannel: true, SendMessages: true, AttachFiles: true,
@@ -639,8 +642,6 @@ async function handleTicketClose(interaction) {
   const isStaff  = member.roles.cache.has(SUPPORT_ROLE_ID);
   const entry    = [...tickets.entries()].find(([, cid]) => cid === channel.id);
   const isOwner  = entry && entry[0] === member.id;
-
-  // Claimed staff also allowed to close
   const isClaimer = claimedTickets.get(channel.id) === member.id;
 
   if (!isStaff && !isOwner && !isClaimer) {
@@ -673,7 +674,6 @@ async function handleCloseConfirmModal(interaction) {
   }
 
   const channel = interaction.channel;
-
   await interaction.reply({ embeds: [feedbackEmbed("🔒 Closing ticket in 3 seconds...")], flags: MessageFlags.Ephemeral });
 
   const entry = [...tickets.entries()].find(([, cid]) => cid === channel.id);
