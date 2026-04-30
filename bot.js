@@ -39,7 +39,7 @@ const JOIN_CHANNEL_ID   = "1491557465727307948";
 const MEMBER_ROLE_ID    = "1488521626059542538";
 const SUPPORT_ROLE_ID   = "1489297553261334759";
 const TICKET_CATEGORY   = "1488455923486691450";
-const EMBED_COLOR       = 0x0a4939;
+const EMBED_COLOR       = 0xC0C0C0;
 
 const EMOJIS = [
   "🥕","🌶️","👜","🦇","🐨","🐹","🪲","🦐","🦩","🍋","🥥","🍕","🍫","🥜",
@@ -531,7 +531,7 @@ async function handleTicketPanelCommand(interaction) {
       `**• Make sure to give staff members clear information about your issue**\n` +
       `**• Reporting a member needs proof ( recordings/screenshots) otherwise it'll be considered as a fake report.**`
     )
-    .setImage("https://cdn.discordapp.com/attachments/1488273264836087959/1489298081873920272/IMG_7769.png?ex=69cfe86c&is=69ce96ec&hm=9f4aed1c01b32eea55bf9dcedc50395a0bc6b4b372ad73fd3849d37a497096fb&")
+    .setImage("https://cdn.discordapp.com/attachments/1488273264836087959/1499352274927878154/450C5667-667D-4A9F-8CAC-6C9AE73CE11B.png?ex=69f47c1e&is=69f32a9e&hm=6f0999dbe8b3aebd9a733af2829526736a1a0f713e567a2102a0799b1d97b928&")
     .setFooter({ text: `${guild.name} | ${timestamp()}`, iconURL: guild.iconURL() ?? null });
 
   const row = new ActionRowBuilder().addComponents(
