@@ -39,7 +39,7 @@ const JOIN_CHANNEL_ID   = "1491557465727307948";
 const MEMBER_ROLE_ID    = "1488521626059542538";
 const SUPPORT_ROLE_ID   = "1489297553261334759";
 const TICKET_CATEGORY   = "1488455923486691450";
-const EMBED_COLOR       = 0xC0C0C0;
+const EMBED_COLOR       = 0x0c0c0c;
 
 const EMOJIS = [
   "🥕","🌶️","👜","🦇","🐨","🐹","🪲","🦐","🦩","🍋","🥥","🍕","🍫","🥜",
