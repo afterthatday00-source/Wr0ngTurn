@@ -531,7 +531,7 @@ async function handleTicketPanelCommand(interaction) {
       `**• Make sure to give staff members clear information about your issue**\n` +
       `**• Reporting a member needs proof ( recordings/screenshots) otherwise it'll be considered as a fake report.**`
     )
-    .setImage("https://cdn.discordapp.com/attachments/1488273264836087959/1499352274927878154/450C5667-667D-4A9F-8CAC-6C9AE73CE11B.png?ex=69f47c1e&is=69f32a9e&hm=6f0999dbe8b3aebd9a733af2829526736a1a0f713e567a2102a0799b1d97b928&")
+    .setImage("https://cdn.discordapp.com/attachments/1488273264836087959/1499519967987761322/2A042261-364C-4384-852A-C0C53E019B41.png?ex=69f5184c&is=69f3c6cc&hm=13e3c8782f913023b8017599cff8872653bd0de06c6fbff916237ffb2c228740&")
     .setFooter({ text: `${guild.name} | ${timestamp()}`, iconURL: guild.iconURL() ?? null });
 
   const row = new ActionRowBuilder().addComponents(
